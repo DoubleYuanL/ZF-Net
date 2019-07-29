@@ -5,10 +5,38 @@ import scipy
 from scipy import ndimage
 import cnn_utils
 import cv2
+import pickle
 #加载数据集
 def load_dataset():
 	X_train_orig , Y_train_orig , X_test_orig , Y_test_orig , classes = cnn_utils.load_dataset()
-	return X_train_orig , Y_train_orig , X_test_orig , Y_test_orig 
+	return X_train_orig , Y_train_orig , X_test_orig , Y_test_orig ,classes
+# def load(f_name):
+# 	with open(f_name, "rb") as fo:
+# 		data = pickle.load(fo, encoding = 'bytes')
+# 		return data
+# def load_data():
+# 	train_data = load("cifar-10-batches-py/data_batch_1")
+# 	data_x = np.array(train_data[b"data"]).reshape(-1, 3, 32, 32)
+# 	data_y = np.array(train_data[b"labels"])
+
+# 	x_train = data_x[0:8000,:]
+# 	y_train = data_y[0:8000]
+# 	print(x_train.shape)
+# 	print(y_train.shape)
+
+# 	x_test = data_x[8000:10000,:]
+# 	y_test = data_y[8000:10000]
+# 	print(x_test.shape)
+# 	print(y_test.shape)
+
+# 	y_train = y_train.reshape((1, y_train.shape[0]))
+# 	y_test = y_test.reshape((1, y_test.shape[0]))
+
+# 	name = load("cifar-10-batches-py/batches.meta")
+# 	name = np.array(name[b"label_names"])
+# 	print(name)
+# 	return x_train,y_train,x_test,y_test,name
+# load_data()
 #初始化数据集
 def init_dataset(X_train_orig , Y_train_orig , X_test_orig , Y_test_orig ):
 	X_train = X_train_orig/255.
@@ -22,11 +50,13 @@ def init_dataset(X_train_orig , Y_train_orig , X_test_orig , Y_test_orig ):
 	# print ("X_test shape: " + str(X_test.shape))
 	# print ("Y_test shape: " + str(Y_test.shape))
 	return X_train, Y_train, X_test, Y_test
+
 #创建占位符
 def create_placeholder(n_H0, n_W0, n_C0, n_y):
 	X = tf.placeholder(tf.float32, [None, n_H0, n_W0, n_C0], name = "X")
 	Y = tf.placeholder(tf.float32, [None,n_y], name = "Y")
-	return X,Y
+	keep_prob = tf.placeholder(tf.float32)
+	return X,Y,keep_prob
 #初始化参数
 def init_parameters():
 	tf.set_random_seed(1) #指定随机种子
@@ -45,7 +75,7 @@ def init_parameters():
 
 	return parameters
 #前向传播
-def forward_propagation(X, parameters,is_train_or_prediction):
+def forward_propagation(X, parameters,keep_prob):
 	W1 = parameters['W1'] 
 	b1 = parameters['b1'] 
 	W2 = parameters['W2'] 
@@ -82,11 +112,12 @@ def forward_propagation(X, parameters,is_train_or_prediction):
 	#f1
 	Fa1 = tf.contrib.layers.flatten(P5)
 	F1 = tf.contrib.layers.fully_connected(Fa1,128,activation_fn=tf.nn.relu)#None)#tf.nn.relu) tf.nn.sigmoid
-	D1 = tf.nn.dropout(F1, 0.8)
-	F2 = tf.contrib.layers.fully_connected(D1,64,activation_fn=tf.nn.relu)
+	F1 = tf.nn.dropout(F1, keep_prob=keep_prob)
 
-	D2 = tf.nn.dropout(F2, 0.5)	
-	Z6 = tf.contrib.layers.fully_connected(D2,6,activation_fn=None)
+	F2 = tf.contrib.layers.fully_connected(F1,64,activation_fn=tf.nn.relu)
+	F2 = tf.nn.dropout(F2, keep_prob=keep_prob)	
+
+	Z6 = tf.contrib.layers.fully_connected(F2,6,activation_fn=None)
 
 	return Z6
 #计算loss
@@ -96,15 +127,16 @@ def compute_loss(Z6,Y):
 #定义模型
 def model(X_train,Y_train,X_test,Y_test,learning_rate,num_epochs,minibatch_size,print_cost,isPlot):
 	seed = 3
+	# X_train = X_train.transpose(0,2,3,1)
 	(m , n_H0, n_W0, n_C0) = X_train.shape
 	n_y = Y_train.shape[1]
 	costs = []
 
-	X,Y = create_placeholder(n_H0, n_W0, n_C0, n_y)
+	X,Y,keep_prob = create_placeholder(n_H0, n_W0, n_C0, n_y)
 
 	parameters = init_parameters()
 
-	Z6 = forward_propagation(X, parameters,is_train_or_prediction=True)
+	Z6 = forward_propagation(X, parameters,keep_prob)
 
 	cost = compute_loss(Z6, Y)
 
@@ -126,7 +158,7 @@ def model(X_train,Y_train,X_test,Y_test,learning_rate,num_epochs,minibatch_size,
 				#选择一个数据块
 				(minibatch_X,minibatch_Y) = minibatch
 				#最小化这个数据块的成本
-				_ , temp_cost = sess.run([optimizer,cost],feed_dict={X:minibatch_X, Y:minibatch_Y})
+				_ , temp_cost = sess.run([optimizer,cost],feed_dict={X:minibatch_X, Y:minibatch_Y, keep_prob:0.5})
 
 				#累加数据块的成本值
 				minibatch_cost += temp_cost / num_minibatches
@@ -153,6 +185,8 @@ def model(X_train,Y_train,X_test,Y_test,learning_rate,num_epochs,minibatch_size,
 		print("参数已经保存到session。")
 		saver.save(sess,"model/save_net.ckpt")
 
+
+		# X_test = X_test.transpose(0,2,3,1)
 		#开始预测数据
 		## 计算当前的预测情况
 		predict_op = tf.argmax(Z6,1)
@@ -163,8 +197,8 @@ def model(X_train,Y_train,X_test,Y_test,learning_rate,num_epochs,minibatch_size,
 		accuracy = tf.reduce_mean(tf.cast(corrent_prediction,"float"))
 		# print("corrent_prediction accuracy= " + str(accuracy))
 
-		train_accuracy = accuracy.eval({X: X_train, Y: Y_train})
-		test_accuary = accuracy.eval({X: X_test, Y: Y_test})
+		train_accuracy = accuracy.eval({X: X_train, Y: Y_train, keep_prob:1.0})
+		test_accuary = accuracy.eval({X: X_test, Y: Y_test, keep_prob:1.0})
 
 		print("训练集准确度：" + str(train_accuracy))
 		print("测试集准确度：" + str(test_accuary))
@@ -172,7 +206,7 @@ def model(X_train,Y_train,X_test,Y_test,learning_rate,num_epochs,minibatch_size,
 		return parameters
 
 if __name__ == '__main__':
-	X_train_orig , Y_train_orig , X_test_orig , Y_test_orig  = load_dataset()
+	X_train_orig , Y_train_orig , X_test_orig , Y_test_orig, name  = load_dataset()
 	X_train,Y_train,X_test,Y_test = init_dataset(X_train_orig , Y_train_orig , X_test_orig , Y_test_orig)
 	parameters = model(X_train,Y_train,X_test,Y_test,learning_rate = 0.0001,num_epochs = 200,minibatch_size=64,print_cost=True,isPlot=True)
 
